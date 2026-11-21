@@ -431,6 +431,155 @@ func TestVerifyMultiJWKSNoMatchingKid(t *testing.T) {
 	}
 }
 
+// TestVerifyJWKSSameKidKeyRotation checks that all keys sharing a kid are
+// considered, not just the first one. This is the situation during key
+// rotation, when an old and a new key can temporarily share a kid.
+func TestVerifyJWKSSameKidKeyRotation(t *testing.T) {
+	payload := []byte("Lorem ipsum dolor sit amet")
+
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signer, err := NewSigner(SigningKey{
+		Algorithm: ES256,
+		Key:       &JSONWebKey{KeyID: "rotating", Key: signingKey},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseSigned(obj.FullSerialize(), []SignatureAlgorithm{ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Put the stale key first, as an attacker or a stale cache might.
+	jwks := &JSONWebKeySet{Keys: []JSONWebKey{
+		{KeyID: "rotating", Key: staleKey.Public()},
+		{KeyID: "rotating", Key: signingKey.Public()},
+	}}
+	out, err := parsed.Verify(jwks)
+	if err != nil {
+		t.Fatalf("Verify with rotated JWKS failed: %v", err)
+	}
+	if !bytes.Equal(out, payload) {
+		t.Error("payload mismatch")
+	}
+}
+
+// TestVerifyJWKSFiltersKeyMetadata checks that keys sharing a kid but marked
+// for another use, or restricted to another algorithm, are not used.
+func TestVerifyJWKSFiltersKeyMetadata(t *testing.T) {
+	payload := []byte("Lorem ipsum dolor sit amet")
+
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := NewSigner(SigningKey{
+		Algorithm: ES256,
+		Key:       &JSONWebKey{KeyID: "selected", Key: signingKey},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseSigned(obj.FullSerialize(), []SignatureAlgorithm{ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		jwk  JSONWebKey
+	}{
+		{
+			name: "wrong use",
+			jwk:  JSONWebKey{KeyID: "selected", Use: "enc", Key: signingKey.Public()},
+		},
+		{
+			name: "wrong alg",
+			jwk:  JSONWebKey{KeyID: "selected", Algorithm: "RS256", Key: signingKey.Public()},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jwks := &JSONWebKeySet{Keys: []JSONWebKey{
+				tc.jwk,
+				{KeyID: "selected", Use: "sig", Algorithm: "ES256", Key: signingKey.Public()},
+			}}
+			if _, err := parsed.Verify(jwks); err != nil {
+				t.Fatalf("Verify with a compatible key failed: %v", err)
+			}
+
+			jwks.Keys = jwks.Keys[:1]
+			if _, err := parsed.Verify(jwks); err == nil {
+				t.Error("Verify succeeded with a key that does not match the signature")
+			}
+		})
+	}
+}
+
+// TestVerifyMultiJWKSSameKidKeyRotation checks that per-signature key selection
+// also considers every key sharing the signature's kid.
+func TestVerifyMultiJWKSSameKidKeyRotation(t *testing.T) {
+	payload := []byte("Lorem ipsum dolor sit amet")
+
+	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signer, err := NewMultiSigner([]SigningKey{
+		{Algorithm: ES256, Key: &JSONWebKey{KeyID: "first", Key: signingKey}},
+		{Algorithm: ES256, Key: &JSONWebKey{KeyID: "rotating", Key: signingKey}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseSigned(obj.FullSerialize(), []SignatureAlgorithm{ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jwks := &JSONWebKeySet{Keys: []JSONWebKey{
+		{KeyID: "rotating", Key: staleKey.Public()},
+		{KeyID: "rotating", Key: signingKey.Public()},
+	}}
+	idx, sig, out, err := parsed.VerifyMulti(jwks)
+	if err != nil {
+		t.Fatalf("VerifyMulti with rotated JWKS failed: %v", err)
+	}
+	if idx != 1 {
+		t.Errorf("verified signature index = %d, want 1", idx)
+	}
+	if sig.Header.KeyID != "rotating" {
+		t.Errorf("verified kid = %q, want \"rotating\"", sig.Header.KeyID)
+	}
+	if !bytes.Equal(out, payload) {
+		t.Error("payload mismatch")
+	}
+}
+
 func GenerateSigningTestKey(sigAlg SignatureAlgorithm) (sig, ver any) {
 	switch sigAlg {
 	case EdDSA:

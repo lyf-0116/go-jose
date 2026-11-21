@@ -435,11 +435,7 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 
 	signature := obj.Signatures[0]
 
-	key, err := tryJWKS(verificationKey, signature.Header)
-	if err != nil {
-		return err
-	}
-	verifier, err := newVerifier(key)
+	keys, err := tryJWKSKeys(verificationKey, signature.Header, jwksUseSignature)
 	if err != nil {
 		return err
 	}
@@ -470,12 +466,28 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 
 	headers := signature.mergedHeaders()
 	alg := headers.getSignatureAlgorithm()
-	err = verifier.verifyPayload(input, signature.Signature, alg)
-	if err != nil {
-		return ErrCryptoFailure
+
+	var verifierErr error
+	triedVerifier := false
+	for _, key := range keys {
+		verifier, err := newVerifier(key)
+		if err != nil {
+			if verifierErr == nil {
+				verifierErr = err
+			}
+			continue
+		}
+		triedVerifier = true
+		if err := verifier.verifyPayload(input, signature.Signature, alg); err == nil {
+			return nil
+		}
 	}
 
-	return nil
+	if !triedVerifier && verifierErr != nil {
+		return verifierErr
+	}
+
+	return ErrCryptoFailure
 }
 
 // VerifyMulti validates (one of the multiple) signatures on the object and
@@ -527,13 +539,9 @@ func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey 
 			}
 		}
 
-		// If the verification key is a JWK Set, pick a key based on this signature's
+		// If the verification key is a JWK Set, pick keys based on this signature's
 		// "kid" header. If no match, skip this signature.
-		key, err := tryJWKS(verificationKey, signature.Header)
-		if err != nil {
-			continue
-		}
-		verifier, err := newVerifier(key)
+		keys, err := tryJWKSKeys(verificationKey, signature.Header, jwksUseSignature)
 		if err != nil {
 			continue
 		}
@@ -545,12 +553,17 @@ func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey 
 
 		headers := signature.mergedHeaders()
 		alg := headers.getSignatureAlgorithm()
-		err = verifier.verifyPayload(input, signature.Signature, alg)
-		if err != nil {
-			continue
-		}
+		for _, key := range keys {
+			verifier, err := newVerifier(key)
+			if err != nil {
+				continue
+			}
+			if err := verifier.verifyPayload(input, signature.Signature, alg); err != nil {
+				continue
+			}
 
-		return i, signature, nil
+			return i, signature, nil
+		}
 	}
 
 	return -1, Signature{}, ErrCryptoFailure

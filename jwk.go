@@ -934,7 +934,25 @@ var (
 	ErrJWKSKidNotFound = errors.New("go-jose/go-jose: JWK with matching kid not found in JWK Set")
 )
 
+const (
+	jwksUseSignature  = "sig"
+	jwksUseEncryption = "enc"
+)
+
+// tryJWKS returns the first candidate key selected from a JWK Set.
 func tryJWKS(key any, header Header) (any, error) {
+	keys, err := tryJWKSKeys(key, header, jwksUseEncryption)
+	if err != nil {
+		return nil, err
+	}
+	return keys[0], nil
+}
+
+// tryJWKSKeys returns all candidate keys from a JWK Set that match the header's
+// key ID and are usable for the requested operation. Multiple keys may share a
+// key ID during key rotation, so callers must try every returned key instead of
+// treating the first one as authoritative.
+func tryJWKSKeys(key any, header Header, use string) ([]any, error) {
 	var jwks JSONWebKeySet
 
 	switch jwksType := key.(type) {
@@ -944,7 +962,7 @@ func tryJWKS(key any, header Header) (any, error) {
 		jwks = jwksType
 	default:
 		// If the specified key is not a JWKS, return as is.
-		return key, nil
+		return []any{key}, nil
 	}
 
 	// If no KID is specified in the header, reject.
@@ -953,14 +971,75 @@ func tryJWKS(key any, header Header) (any, error) {
 		return nil, ErrJWKSKidNotFound
 	}
 
-	// Find the JWK with the matching KID. If no JWK with the specified KID is
-	// found, reject.
-	keys := jwks.Key(kid)
-	if len(keys) == 0 {
+	var matched int
+	var keys []any
+	for _, jwk := range jwks.Keys {
+		if jwk.KeyID != kid {
+			continue
+		}
+		matched++
+
+		// A key's "use" and "alg" members are restrictions. An empty value
+		// means the key is not restricted to a particular operation or
+		// algorithm.
+		if jwk.Use != "" && jwk.Use != use {
+			continue
+		}
+		if jwk.Algorithm != "" && jwk.Algorithm != header.Algorithm {
+			continue
+		}
+		if use == jwksUseSignature &&
+			!keySupportsSignatureAlgorithm(jwk.Key, SignatureAlgorithm(header.Algorithm)) {
+			continue
+		}
+
+		keys = append(keys, jwk.Key)
+	}
+	if matched == 0 || len(keys) == 0 {
 		return nil, ErrJWKSKidNotFound
 	}
 
-	return keys[0].Key, nil
+	return keys, nil
+}
+
+// keySupportsSignatureAlgorithm reports whether key has the type (and, for
+// ECDSA, the curve) required by alg. Unknown key types are left to newVerifier
+// so that OpaqueVerifier and other extension key types keep working.
+func keySupportsSignatureAlgorithm(key any, alg SignatureAlgorithm) bool {
+	switch key := key.(type) {
+	case ed25519.PublicKey:
+		return alg == EdDSA
+	case *rsa.PublicKey:
+		if key == nil {
+			return false
+		}
+		switch alg {
+		case RS256, RS384, RS512, PS256, PS384, PS512:
+			return true
+		}
+		return false
+	case *ecdsa.PublicKey:
+		if key == nil || key.Curve == nil {
+			return false
+		}
+		switch alg {
+		case ES256:
+			return key.Curve == elliptic.P256()
+		case ES384:
+			return key.Curve == elliptic.P384()
+		case ES512:
+			return key.Curve == elliptic.P521()
+		}
+		return false
+	case []byte:
+		switch alg {
+		case HS256, HS384, HS512:
+			return true
+		}
+		return false
+	default:
+		return true
+	}
 }
 
 // weakEd25519PublicKeys contains the low-order Ed25519 encodings accepted by
