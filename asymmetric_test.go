@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json/jsontext"
 	"errors"
 	"io"
@@ -415,6 +416,38 @@ func TestInvalidEllipticCurveVerify(t *testing.T) {
 	err = verifier384.verifyPayload(payload, newSignature, ES512)
 	if err == nil || !strings.Contains(err.Error(), "different algorithm") {
 		t.Fatalf("verifying payload: expected error containing 'different algorithm', got %v", err)
+	}
+}
+
+func TestInvalidEllipticCurveVerifyJWS(t *testing.T) {
+	payload := []byte("payload")
+	protected := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"ES384"}`))
+	signingInput := protected + "." + base64.RawURLEncoding.EncodeToString(payload)
+
+	hash384 := sha512.Sum384([]byte(signingInput))
+	r, s, err := ecdsa.Sign(rand.Reader, ecTestKey256, hash384[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signature := make([]byte, 96)
+	r.FillBytes(signature[:48])
+	s.FillBytes(signature[48:])
+	token := signingInput + "." + base64.RawURLEncoding.EncodeToString(signature)
+
+	// Parsing only checks the caller's allowlist; it does not have a key and
+	// therefore cannot detect that the key and algorithm are incompatible.
+	obj, err := ParseSignedCompact(token, []SignatureAlgorithm{ES384})
+	if err != nil {
+		t.Fatalf("parsing JWS: %v", err)
+	}
+
+	_, err = obj.Verify(&ecTestKey256.PublicKey)
+	if !errors.Is(err, ErrAlgorithmMismatch) {
+		t.Fatalf("verifying payload: expected ErrAlgorithmMismatch, got %v", err)
+	}
+	if errors.Is(err, ErrCryptoFailure) {
+		t.Fatalf("verifying payload: algorithm mismatch was reported as a cryptographic failure: %v", err)
 	}
 }
 

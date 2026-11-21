@@ -53,6 +53,11 @@ var (
 	// algorithm that is not yet implemented.
 	ErrUnsupportedAlgorithm = errors.New("go-jose/go-jose: unknown/unsupported algorithm")
 
+	// ErrAlgorithmMismatch indicates that the signature algorithm selected by
+	// the JWS header is not compatible with the verification key. For example,
+	// an ES384 signature requires a P-384 key.
+	ErrAlgorithmMismatch = errors.New("go-jose/go-jose: signature uses different algorithm than public key")
+
 	// ErrUnsupportedKeyType indicates that the given key is not supported.
 	ErrUnsupportedKeyType = errors.New("go-jose/go-jose: unsupported key type, format, curve, or RSA modulus size")
 

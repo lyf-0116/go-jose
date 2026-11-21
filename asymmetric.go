@@ -563,32 +563,28 @@ func (ctx ecDecrypterSigner) signPayload(payload []byte, alg SignatureAlgorithm)
 	}, nil
 }
 
-// Verify the given payload
-func (ctx ecEncrypterVerifier) verifyPayload(payload []byte, signature []byte, alg SignatureAlgorithm) error {
-	var keySize int
-	var hash crypto.Hash
-
+func ecAlgorithm(alg SignatureAlgorithm) (elliptic.Curve, int, crypto.Hash, error) {
 	switch alg {
 	case ES256:
-		keySize = 32
-		hash = crypto.SHA256
-		if ctx.publicKey.Curve != elliptic.P256() {
-			return fmt.Errorf("go-jose/go-jose: signature uses different algorithm than public key")
-		}
+		return elliptic.P256(), 32, crypto.SHA256, nil
 	case ES384:
-		keySize = 48
-		hash = crypto.SHA384
-		if ctx.publicKey.Curve != elliptic.P384() {
-			return fmt.Errorf("go-jose/go-jose: signature uses different algorithm than public key")
-		}
+		return elliptic.P384(), 48, crypto.SHA384, nil
 	case ES512:
-		keySize = 66
-		hash = crypto.SHA512
-		if ctx.publicKey.Curve != elliptic.P521() {
-			return fmt.Errorf("go-jose/go-jose: signature uses different algorithm than public key")
-		}
+		return elliptic.P521(), 66, crypto.SHA512, nil
 	default:
-		return ErrUnsupportedAlgorithm
+		return nil, 0, 0, ErrUnsupportedAlgorithm
+	}
+}
+
+// Verify the given payload
+func (ctx ecEncrypterVerifier) verifyPayload(payload []byte, signature []byte, alg SignatureAlgorithm) error {
+	if err := ctx.checkAlgorithm(alg); err != nil {
+		return err
+	}
+
+	_, keySize, hash, err := ecAlgorithm(alg)
+	if err != nil {
+		return err
 	}
 
 	if len(signature) != 2*keySize {
@@ -609,5 +605,16 @@ func (ctx ecEncrypterVerifier) verifyPayload(payload []byte, signature []byte, a
 		return errors.New("go-jose/go-jose: ecdsa signature failed to verify")
 	}
 
+	return nil
+}
+
+func (ctx ecEncrypterVerifier) checkAlgorithm(alg SignatureAlgorithm) error {
+	expectedCurve, _, _, err := ecAlgorithm(alg)
+	if err != nil {
+		return err
+	}
+	if ctx.publicKey == nil || ctx.publicKey.Curve != expectedCurve {
+		return ErrAlgorithmMismatch
+	}
 	return nil
 }

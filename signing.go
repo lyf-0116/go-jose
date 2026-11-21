@@ -131,6 +131,10 @@ type payloadVerifier interface {
 	verifyPayload(payload []byte, signature []byte, alg SignatureAlgorithm) error
 }
 
+type payloadAlgorithmChecker interface {
+	checkAlgorithm(alg SignatureAlgorithm) error
+}
+
 var errInvalidVerificationKey = errors.New("go-jose/go-jose: invalid verification key")
 
 type genericSigner struct {
@@ -463,13 +467,19 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 		}
 	}
 
+	headers := signature.mergedHeaders()
+	alg := headers.getSignatureAlgorithm()
+	if checker, ok := verifier.(payloadAlgorithmChecker); ok {
+		if err := checker.checkAlgorithm(alg); err != nil {
+			return err
+		}
+	}
+
 	input, err := obj.computeAuthData(payload, &signature)
 	if err != nil {
 		return ErrCryptoFailure
 	}
 
-	headers := signature.mergedHeaders()
-	alg := headers.getSignatureAlgorithm()
 	err = verifier.verifyPayload(input, signature.Signature, alg)
 	if err != nil {
 		return ErrCryptoFailure
@@ -538,13 +548,19 @@ func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey 
 			continue
 		}
 
+		headers := signature.mergedHeaders()
+		alg := headers.getSignatureAlgorithm()
+		if checker, ok := verifier.(payloadAlgorithmChecker); ok {
+			if err := checker.checkAlgorithm(alg); err != nil {
+				continue
+			}
+		}
+
 		input, err := obj.computeAuthData(payload, &signature)
 		if err != nil {
 			continue
 		}
 
-		headers := signature.mergedHeaders()
-		alg := headers.getSignatureAlgorithm()
 		err = verifier.verifyPayload(input, signature.Signature, alg)
 		if err != nil {
 			continue
