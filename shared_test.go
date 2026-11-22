@@ -84,6 +84,50 @@ func TestHeaderNotEqual(t *testing.T) {
 	}
 }
 
+func TestCheckCriticalHeaders(t *testing.T) {
+	protected := rawHeader{}
+	if err := protected.set(headerCritical, []string{"exp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := protected.set(HeaderKey("exp"), 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkCriticalHeaders(&protected, nil); err != nil {
+		t.Fatalf("checkCriticalHeaders rejected a protected critical header: %v", err)
+	}
+	if err := checkCriticalHeaders(&protected, supportedCriticalHeaders(supportedCritical, "exp")); err != nil {
+		t.Fatalf("checkCriticalHeaders rejected an explicitly supported critical header: %v", err)
+	}
+	if err := checkCriticalHeaders(&protected, supportedCriticalHeaders(nil)); err == nil {
+		t.Fatal("checkCriticalHeaders accepted an unsupported critical header")
+	}
+
+	unprotected := rawHeader{}
+	if err := unprotected.set(HeaderKey("exp"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCriticalHeaders(&protected, nil, &unprotected); err == nil {
+		t.Fatal("checkCriticalHeaders accepted a critical parameter in an unprotected header")
+	}
+
+	missing := rawHeader{}
+	if err := missing.set(headerCritical, []string{"exp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCriticalHeaders(&missing, nil); err == nil {
+		t.Fatal("checkCriticalHeaders accepted a critical parameter missing from the protected header")
+	}
+
+	unprotectedCrit := rawHeader{}
+	if err := unprotectedCrit.set(headerCritical, []string{"exp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCriticalHeaders(nil, nil, &unprotectedCrit); err == nil {
+		t.Fatal("checkCriticalHeaders accepted an unprotected crit parameter")
+	}
+}
+
 // getJWK extracts parsed "jwk" from the raw JSON.
 func (parsed rawHeader) getJWK() (*JSONWebKey, error) {
 	v := parsed[headerJWK]

@@ -406,8 +406,12 @@ func (ctx *genericSigner) Options() SignerOptions {
 //   - HS256: 32 bytes
 //   - HS384: 48 bytes
 //   - HS512: 64 bytes
-func (obj JSONWebSignature) Verify(verificationKey any) ([]byte, error) {
-	err := obj.DetachedVerify(obj.payload, verificationKey)
+//
+// Additional critical header names that the caller understands and processes
+// can be supplied in criticalNames. Every name must still appear in the
+// protected header.
+func (obj JSONWebSignature) Verify(verificationKey any, criticalNames ...string) ([]byte, error) {
+	err := obj.DetachedVerify(obj.payload, verificationKey, criticalNames...)
 	if err != nil {
 		return nil, err
 	}
@@ -428,12 +432,16 @@ func (obj JSONWebSignature) UnsafePayloadWithoutVerification() []byte {
 //
 // The verificationKey argument must have one of the types allowed for the
 // verificationKey argument of JSONWebSignature.Verify().
-func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) error {
+func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any, criticalNames ...string) error {
 	if len(obj.Signatures) > 1 {
 		return errors.New("go-jose/go-jose: too many signatures in payload; expecting only one")
 	}
 
 	signature := obj.Signatures[0]
+
+	if err := signature.checkCriticalHeaders(supportedCriticalHeaders(supportedCritical, criticalNames...)); err != nil {
+		return err
+	}
 
 	key, err := tryJWKS(verificationKey, signature.Header)
 	if err != nil {
@@ -442,25 +450,6 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 	verifier, err := newVerifier(key)
 	if err != nil {
 		return err
-	}
-
-	if signature.header != nil {
-		// Per https://www.rfc-editor.org/rfc/rfc7515.html#section-4.1.11,
-		// 4.1.11. "crit" (Critical) Header Parameter
-		// "When used, this Header Parameter MUST be integrity
-		// protected; therefore, it MUST occur only within the JWS
-		// Protected Header."
-		err = signature.header.checkNoCritical()
-		if err != nil {
-			return err
-		}
-	}
-
-	if signature.protected != nil {
-		err = signature.protected.checkSupportedCritical(supportedCritical)
-		if err != nil {
-			return err
-		}
 	}
 
 	input, err := obj.computeAuthData(payload, &signature)
@@ -485,8 +474,8 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 //
 // The verificationKey argument must have one of the types allowed for the
 // verificationKey argument of JSONWebSignature.Verify().
-func (obj JSONWebSignature) VerifyMulti(verificationKey any) (int, Signature, []byte, error) {
-	idx, sig, err := obj.DetachedVerifyMulti(obj.payload, verificationKey)
+func (obj JSONWebSignature) VerifyMulti(verificationKey any, criticalNames ...string) (int, Signature, []byte, error) {
+	idx, sig, err := obj.DetachedVerifyMulti(obj.payload, verificationKey, criticalNames...)
 	if err != nil {
 		return -1, Signature{}, nil, err
 	}
@@ -505,26 +494,11 @@ func (obj JSONWebSignature) VerifyMulti(verificationKey any) (int, Signature, []
 //
 // The verificationKey argument must have one of the types allowed for the
 // verificationKey argument of JSONWebSignature.Verify().
-func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey any) (int, Signature, error) {
+func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey any, criticalNames ...string) (int, Signature, error) {
+	supported := supportedCriticalHeaders(supportedCritical, criticalNames...)
 	for i, signature := range obj.Signatures {
-		if signature.header != nil {
-			// Per https://www.rfc-editor.org/rfc/rfc7515.html#section-4.1.11,
-			// 4.1.11. "crit" (Critical) Header Parameter
-			// "When used, this Header Parameter MUST be integrity
-			// protected; therefore, it MUST occur only within the JWS
-			// Protected Header."
-			err := signature.header.checkNoCritical()
-			if err != nil {
-				continue
-			}
-		}
-
-		if signature.protected != nil {
-			// Check for only supported critical headers
-			err := signature.protected.checkSupportedCritical(supportedCritical)
-			if err != nil {
-				continue
-			}
+		if err := signature.checkCriticalHeaders(supported); err != nil {
+			continue
 		}
 
 		// If the verification key is a JWK Set, pick a key based on this signature's

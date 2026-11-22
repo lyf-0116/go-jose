@@ -190,7 +190,9 @@ func (b *signedBuilder) Token() (*JSONWebToken, error) {
 		h[i] = v.Header
 	}
 
-	return b.builder.token(sig.Verify, h)
+	return b.builder.token(func(verificationKey any) ([]byte, error) {
+		return sig.Verify(verificationKey)
+	}, h)
 }
 
 func (b *signedBuilder) Serialize() (string, error) {
@@ -237,7 +239,9 @@ func (b *encryptedBuilder) Token() (*JSONWebToken, error) {
 		return nil, err
 	}
 
-	return b.builder.token(enc.Decrypt, []jose.Header{enc.Header})
+	return b.builder.token(func(decryptionKey any) ([]byte, error) {
+		return enc.Decrypt(decryptionKey)
+	}, []jose.Header{enc.Header})
 }
 
 func (b *encryptedBuilder) encrypt() (*jose.JSONWebEncryption, error) {

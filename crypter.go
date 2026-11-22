@@ -459,15 +459,18 @@ func validateContentEncryptionKeySize(cek []byte, cipher contentCipher) error {
 //
 // Automatically decompresses plaintext, but returns an error if the decompressed
 // data would be >250kB or >10x the size of the compressed data, whichever is larger.
-func (obj JSONWebEncryption) Decrypt(decryptionKey any) ([]byte, error) {
+//
+// Additional critical header names that the caller understands and processes
+// can be supplied in criticalNames. Every name must still appear in the
+// protected header.
+func (obj JSONWebEncryption) Decrypt(decryptionKey any, criticalNames ...string) ([]byte, error) {
 	headers := obj.mergedHeaders(nil)
 
 	if len(obj.recipients) > 1 {
 		return nil, errors.New("go-jose/go-jose: too many recipients in payload; expecting only one")
 	}
 
-	err := headers.checkNoCritical()
-	if err != nil {
+	if err := obj.checkCriticalHeaders(supportedCriticalHeaders(nil, criticalNames...)); err != nil {
 		return nil, err
 	}
 
@@ -543,11 +546,14 @@ func (obj JSONWebEncryption) Decrypt(decryptionKey any) ([]byte, error) {
 // be run for each recipient. To be safe: don't allow PBES2 algorithms in calls
 // to ParseEncrypted / ParseEncryptedJSON. If your application requires PBES2,
 // prefer Decrypt(), which will only process single-recipient messages.
-func (obj JSONWebEncryption) DecryptMulti(decryptionKey any) (int, Header, []byte, error) {
+//
+// Additional critical header names that the caller understands and processes
+// can be supplied in criticalNames. Every name must still appear in the
+// protected header.
+func (obj JSONWebEncryption) DecryptMulti(decryptionKey any, criticalNames ...string) (int, Header, []byte, error) {
 	globalHeaders := obj.mergedHeaders(nil)
 
-	err := globalHeaders.checkNoCritical()
-	if err != nil {
+	if err := obj.checkCriticalHeaders(supportedCriticalHeaders(nil, criticalNames...)); err != nil {
 		return -1, Header{}, nil, err
 	}
 

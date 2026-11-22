@@ -25,6 +25,7 @@ import (
 	"crypto/rsa"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -514,6 +515,53 @@ func TestInvalidJWS(t *testing.T) {
 	_, err = obj.Verify(&rsaTestKey.PublicKey)
 	if err == nil {
 		t.Error("should not verify message with missing headers")
+	}
+}
+
+func TestCriticalHeadersValidatedAtParseTime(t *testing.T) {
+	key := []byte("01234567890123456789012345678901")
+
+	inputs := []string{
+		// Flattened: protected crit names b64, but b64 is only unprotected.
+		`{"payload":"YWJj","protected":"eyJhbGciOiJIUzI1NiIsImNyaXQiOlsiYjY0Il19","header":{"b64":false},"signature":"8_HaHJcOMPyCVqAMv0VFLsmmCIK_XWWJyHTyjKAaAZI"}`,
+		// General: same placement violation in a signature object.
+		`{"payload":"YWJj","signatures":[{"protected":"eyJhbGciOiJIUzI1NiIsImNyaXQiOlsiYjY0Il19","header":{"b64":false},"signature":"8_HaHJcOMPyCVqAMv0VFLsmmCIK_XWWJyHTyjKAaAZI"}]}`,
+	}
+
+	for _, input := range inputs {
+		parsed, err := ParseSignedJSON(input, []SignatureAlgorithm{HS256})
+		if err == nil {
+			_, err = parsed.Verify(key)
+		}
+		if !errors.Is(err, ErrUnsupportedCriticalHeader) {
+			t.Errorf("expected ErrUnsupportedCriticalHeader, got %v", err)
+		}
+	}
+}
+
+func TestCustomCriticalHeader(t *testing.T) {
+	key := []byte("01234567890123456789012345678901")
+	opts := new(SignerOptions)
+	opts.WithHeader(HeaderKey("exp"), "value").WithCritical("exp")
+
+	signer, err := NewSigner(SigningKey{Algorithm: HS256, Key: key}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := signer.Sign([]byte("payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := ParseSignedJSON(signed.FullSerialize(), []SignatureAlgorithm{HS256})
+	if err != nil {
+		t.Fatalf("parsing a protected custom critical header failed: %v", err)
+	}
+	if _, err := parsed.Verify(key); !errors.Is(err, ErrUnsupportedCriticalHeader) {
+		t.Errorf("Verify() without declaring custom critical support: got %v", err)
+	}
+	if payload, err := parsed.Verify(key, "exp"); err != nil || string(payload) != "payload" {
+		t.Errorf("Verify() with custom critical support: payload=%q err=%v", payload, err)
 	}
 }
 

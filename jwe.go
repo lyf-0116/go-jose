@@ -90,6 +90,15 @@ func (obj JSONWebEncryption) mergedHeaders(recipient *recipientInfo) rawHeader {
 	return out
 }
 
+func (obj JSONWebEncryption) checkCriticalHeaders(supported map[string]struct{}) error {
+	unprotected := make([]*rawHeader, 0, len(obj.recipients)+1)
+	unprotected = append(unprotected, obj.unprotected)
+	for i := range obj.recipients {
+		unprotected = append(unprotected, obj.recipients[i].header)
+	}
+	return checkCriticalHeaders(obj.protected, supported, unprotected...)
+}
+
 // Get the additional authenticated data from a JWE object.
 func (obj JSONWebEncryption) computeAuthData() ([]byte, error) {
 	var protected string
@@ -231,6 +240,10 @@ func (parsed *rawJSONWebEncryption) sanitized(
 			obj.recipients[r].header = parsed.Recipients[r].Header
 			obj.recipients[r].encryptedKey = encryptedKey
 		}
+	}
+
+	if err := obj.checkCriticalHeaders(nil); err != nil {
+		return nil, err
 	}
 
 	for i, recipient := range obj.recipients {

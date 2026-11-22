@@ -211,6 +211,76 @@ func TestMissingInvalidHeaders(t *testing.T) {
 	}
 }
 
+func TestCriticalHeadersValidatedAtParseTimeJWE(t *testing.T) {
+	withCrit := newBuffer([]byte(`{"alg":"dir","enc":"A128GCM","crit":["exp"]}`)).base64()
+	withoutCrit := newBuffer([]byte(`{"alg":"dir","enc":"A128GCM"}`)).base64()
+	inputs := []string{
+		// Flattened: exp is named as critical, but only appears unprotected.
+		`{"protected":"` + withCrit + `","unprotected":{"exp":1},"encrypted_key":"","iv":"AAAAAAAAAAAAAAAA","ciphertext":"AAAA","tag":"AAAAAAAAAAAAAAAAAAAAAA"}`,
+		// General: the same violation in a recipient header.
+		`{"protected":"` + withCrit + `","recipients":[{"header":{"exp":1},"encrypted_key":""}],"iv":"AAAAAAAAAAAAAAAA","ciphertext":"AAAA","tag":"AAAAAAAAAAAAAAAAAAAAAA"}`,
+		// crit itself must be protected.
+		`{"protected":"` + withoutCrit + `","unprotected":{"crit":["exp"]},"encrypted_key":"","iv":"AAAAAAAAAAAAAAAA","ciphertext":"AAAA","tag":"AAAAAAAAAAAAAAAAAAAAAA"}`,
+	}
+
+	for _, input := range inputs {
+		_, err := ParseEncryptedJSON(input, []KeyAlgorithm{DIRECT}, []ContentEncryption{A128GCM})
+		if !errors.Is(err, ErrUnsupportedCriticalHeader) {
+			t.Errorf("expected ErrUnsupportedCriticalHeader, got %v", err)
+		}
+	}
+}
+
+func TestCustomCriticalHeaderJWE(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	opts := new(EncrypterOptions)
+	opts.WithHeader(headerCritical, []string{"exp"}).WithHeader(HeaderKey("exp"), "value")
+
+	encrypter, err := NewEncrypter(A128GCM, Recipient{Algorithm: DIRECT, Key: key}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := encrypter.Encrypt([]byte("plaintext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := ParseEncryptedJSON(encrypted.FullSerialize(), []KeyAlgorithm{DIRECT}, []ContentEncryption{A128GCM})
+	if err != nil {
+		t.Fatalf("parsing a protected custom critical header failed: %v", err)
+	}
+	if _, err := parsed.Decrypt(key); !errors.Is(err, ErrUnsupportedCriticalHeader) {
+		t.Errorf("Decrypt() without declaring custom critical support: got %v", err)
+	}
+	if plaintext, err := parsed.Decrypt(key, "exp"); err != nil || string(plaintext) != "plaintext" {
+		t.Errorf("Decrypt() with custom critical support: plaintext=%q err=%v", plaintext, err)
+	}
+}
+
+func TestDecryptRejectsRecipientCriticalHeader(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	encrypter, err := NewEncrypter(A128GCM, Recipient{Algorithm: DIRECT, Key: key}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := encrypter.Encrypt([]byte("plaintext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted.recipients[0].header = &rawHeader{}
+	if err := encrypted.recipients[0].header.set(headerCritical, []string{"exp"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := encrypted.Decrypt(key); !errors.Is(err, ErrUnsupportedCriticalHeader) {
+		t.Errorf("Decrypt() accepted crit in a recipient header: %v", err)
+	}
+	if _, _, _, err := encrypted.DecryptMulti(key); !errors.Is(err, ErrUnsupportedCriticalHeader) {
+		t.Errorf("DecryptMulti() accepted crit in a recipient header: %v", err)
+	}
+}
+
 func TestRejectNullProtectedHeaderJWE(t *testing.T) {
 	inputs := []string{
 		// Flattened, "null"

@@ -25,6 +25,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 )
 
 // KeyAlgorithm represents a key management algorithm.
@@ -329,9 +330,12 @@ func (parsed rawHeader) getTag() (*byteBuffer, error) {
 // getCritical extracts parsed "crit" from the raw JSON. If omitted, it
 // returns an empty slice.
 func (parsed rawHeader) getCritical() ([]string, error) {
-	v := parsed[headerCritical]
-	if v == nil {
+	v, ok := parsed[headerCritical]
+	if !ok {
 		return nil, nil
+	}
+	if v == nil {
+		return nil, ErrUnsupportedCriticalHeader
 	}
 
 	var q []string
@@ -351,21 +355,90 @@ func (parsed rawHeader) checkNoCritical() error {
 	return nil
 }
 
-// checkSupportedCritical verifies there are no unsupported critical headers.
-// Supported headers are passed in as a set: map of names to empty structs
-func (parsed rawHeader) checkSupportedCritical(supported map[string]struct{}) error {
-	crit, err := parsed.getCritical()
-	if err != nil {
-		return err
-	}
-
-	for _, name := range crit {
-		if _, ok := supported[name]; !ok {
+// checkCriticalHeaders verifies that the "crit" parameter, if present, is
+// integrity protected and that every parameter it names is present in the
+// protected header and absent from all unprotected headers. If supported is
+// non-nil, every named parameter must also be present in it.
+//
+// This is the shared validation point for JWS and JWE parsing, verification,
+// and decryption. Passing a nil supported set checks placement only, which
+// allows parsing to reject malformed critical headers without deciding whether
+// an extension is understood by the caller.
+func checkCriticalHeaders(protected *rawHeader, supported map[string]struct{}, unprotected ...*rawHeader) error {
+	for _, header := range unprotected {
+		if header == nil {
+			continue
+		}
+		if _, ok := (*header)[headerCritical]; ok {
+			return ErrUnsupportedCriticalHeader
+		}
+		// RFC 7797 Section 3 requires "b64" to occur only in the JWS
+		// Protected Header, whether or not it is named by "crit".
+		if _, ok := (*header)[headerB64]; ok {
 			return ErrUnsupportedCriticalHeader
 		}
 	}
 
+	if protected == nil {
+		return nil
+	}
+
+	crit, err := protected.getCritical()
+	if err != nil {
+		return ErrUnsupportedCriticalHeader
+	}
+
+	for _, name := range crit {
+		if name == "" || name == headerCritical {
+			return ErrUnsupportedCriticalHeader
+		}
+		if supported != nil {
+			if _, ok := supported[name]; !ok {
+				return ErrUnsupportedCriticalHeader
+			}
+		}
+
+		// The named parameter must be in the protected header, not merely in
+		// one of the unprotected headers.
+		if v, ok := (*protected)[HeaderKey(name)]; !ok || v == nil {
+			return ErrUnsupportedCriticalHeader
+		}
+		for _, header := range unprotected {
+			if header == nil {
+				continue
+			}
+			if _, ok := (*header)[HeaderKey(name)]; ok {
+				return ErrUnsupportedCriticalHeader
+			}
+		}
+	}
+
 	return nil
+}
+
+// checkSupportedCritical verifies there are no unsupported critical headers.
+// Supported headers are passed in as a set: map of names to empty structs
+func (parsed rawHeader) checkSupportedCritical(supported map[string]struct{}) error {
+	if supported == nil {
+		supported = map[string]struct{}{}
+	}
+	return checkCriticalHeaders(&parsed, supported)
+}
+
+func supportedCriticalHeaders(defaults map[string]struct{}, extra ...string) map[string]struct{} {
+	if len(extra) == 0 {
+		if defaults == nil {
+			return map[string]struct{}{}
+		}
+		return defaults
+	}
+
+	supported := make(map[string]struct{}, len(defaults)+len(extra))
+	maps.Copy(supported, defaults)
+	for _, name := range extra {
+		supported[name] = struct{}{}
+	}
+	return supported
 }
 
 // getS2C extracts parsed "p2c" from the raw JSON.

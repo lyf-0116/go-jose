@@ -102,7 +102,9 @@ func ParseSigned(s string, signatureAlgorithms []jose.SignatureAlgorithm) (*JSON
 	}
 
 	return &JSONWebToken{
-		payload:           sig.Verify,
+		payload: func(verificationKey any) ([]byte, error) {
+			return sig.Verify(verificationKey)
+		},
 		unverifiedPayload: sig.UnsafePayloadWithoutVerification,
 		Headers:           headers,
 	}, nil
@@ -161,7 +163,9 @@ func ParseEncrypted(s string,
 	}
 
 	return &JSONWebToken{
-		payload: enc.Decrypt,
+		payload: func(decryptionKey any) ([]byte, error) {
+			return enc.Decrypt(decryptionKey)
+		},
 		Headers: []jose.Header{enc.Header},
 	}, nil
 }

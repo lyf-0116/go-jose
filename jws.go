@@ -162,6 +162,10 @@ func (sig Signature) mergedHeaders() rawHeader {
 	return out
 }
 
+func (sig Signature) checkCriticalHeaders(supported map[string]struct{}) error {
+	return checkCriticalHeaders(sig.protected, supported, sig.header)
+}
+
 // Compute data to be signed
 func (obj JSONWebSignature) computeAuthData(payload []byte, signature *Signature) ([]byte, error) {
 	var authData bytes.Buffer
@@ -283,6 +287,9 @@ func (parsed *rawJSONWebSignature) sanitized(signatureAlgorithms []SignatureAlgo
 
 		signature.header = parsed.Header
 		signature.Signature = parsed.Signature.bytes()
+		if err := signature.checkCriticalHeaders(nil); err != nil {
+			return nil, err
+		}
 		// Make a fake "original" rawSignatureInfo to store the unprocessed
 		// Protected header. This is necessary because the Protected header can
 		// contain arbitrary fields not registered as part of the spec. See
@@ -346,6 +353,9 @@ func (parsed *rawJSONWebSignature) sanitized(signatureAlgorithms []SignatureAlgo
 		}
 
 		obj.Signatures[i].header = sig.Header
+		if err := obj.Signatures[i].checkCriticalHeaders(nil); err != nil {
+			return nil, err
+		}
 
 		mergedHeaders := obj.Signatures[i].mergedHeaders()
 		alg := mergedHeaders.getSignatureAlgorithm()
