@@ -25,6 +25,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // KeyAlgorithm represents a key management algorithm.
@@ -69,6 +70,16 @@ var (
 	// ErrUnprotectedNonce indicates that while parsing a JWS or JWE object, a
 	// nonce header parameter was included in an unprotected header object.
 	ErrUnprotectedNonce = errors.New("go-jose/go-jose: Nonce parameter included in unprotected header")
+
+	// ErrDuplicateHeaderParameter indicates that the same Header Parameter
+	// name occurs in more than one of the header objects that together make
+	// up a JWS/JWE header (e.g. the protected and unprotected headers, or a
+	// per-recipient/per-signature header). RFC 7516 Section 7.1 step 5 and
+	// RFC 7515 Section 7.2 step 7 require receivers to reject such messages:
+	// only the protected header is integrity-checked, so a duplicate would
+	// let an unauthenticated header determine the value actually used by the
+	// processing path.
+	ErrDuplicateHeaderParameter = errors.New("go-jose/go-jose: duplicate header parameter name across protected, unprotected, and per-recipient headers")
 
 	// ErrMissingX5cHeader indicates that the JWT header is missing x5c headers.
 	ErrMissingX5cHeader = errors.New("go-jose/go-jose: no x5c header present in message")
@@ -488,7 +499,11 @@ func (parsed rawHeader) isSet(k HeaderKey) bool {
 	return ok
 }
 
-// Merge headers from src into dst, giving precedence to headers from l.
+// Merge headers from src into dst. Parameters already present in dst are
+// kept, i.e. headers merged first take precedence. Callers are responsible for
+// rejecting messages whose header objects share parameter names, as required
+// by RFC 7516 Section 7.1 step 5 and RFC 7515 Section 7.2 step 7; see
+// checkDisjointHeaders.
 func (parsed rawHeader) merge(src *rawHeader) {
 	if src == nil {
 		return
@@ -501,6 +516,68 @@ func (parsed rawHeader) merge(src *rawHeader) {
 
 		parsed[k] = v
 	}
+}
+
+// AllowDuplicateHeaderParameters controls whether parsing accepts messages in
+// which the same Header Parameter name occurs in more than one of the header
+// objects that together comprise a JWS/JWE header (protected, unprotected, and
+// per-recipient/per-signature headers).
+//
+// Per RFC 7516 Section 7.1 step 5 and RFC 7515 Section 7.2 step 7, the merged
+// header MUST NOT contain duplicate parameter names. Only the protected header
+// is authenticated, so a duplicate lets an unauthenticated header influence
+// processing-critical parameters such as "alg", "enc", or "zip". Such messages
+// are therefore rejected by default.
+//
+// Set this to true only as a temporary compatibility measure for legacy
+// producers; duplicate parameters are then allowed and recorded as a warning
+// through DuplicateHeaderWarning instead of failing parsing. If modifying this
+// value, do it before any parsing occurs.
+var AllowDuplicateHeaderParameters = false
+
+// DuplicateHeaderWarning, when non-nil, is called whenever a parsed message
+// contains header parameter names shared between header objects. It is always
+// invoked for duplicates; when AllowDuplicateHeaderParameters is false (the
+// default) the message is additionally rejected with
+// ErrDuplicateHeaderParameter.
+var DuplicateHeaderWarning func(duplicates []HeaderKey)
+
+// checkDisjointHeaders verifies that none of the given header objects share
+// any Header Parameter name. The header objects are passed in merge order
+// (the protected header first, then the shared unprotected header, then the
+// per-recipient or per-signature header, if any), matching the order in which
+// they make up the JOSE header for a single recipient or signature.
+func checkDisjointHeaders(headers ...*rawHeader) error {
+	seen := map[HeaderKey]struct{}{}
+	var duplicates []HeaderKey
+
+	for _, header := range headers {
+		if header == nil {
+			continue
+		}
+		for key := range *header {
+			if _, ok := seen[key]; ok {
+				duplicates = append(duplicates, key)
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+	}
+
+	if len(duplicates) == 0 {
+		return nil
+	}
+
+	slices.Sort(duplicates)
+	duplicates = slices.Compact(duplicates)
+	if DuplicateHeaderWarning != nil {
+		DuplicateHeaderWarning(duplicates)
+	}
+	if AllowDuplicateHeaderParameters {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %v", ErrDuplicateHeaderParameter, duplicates)
 }
 
 // Get JOSE name of curve

@@ -291,7 +291,7 @@ func TestRejectUnprotectedJWENonce(t *testing.T) {
 	}
 }
 
-func TestParseEncryptedZeroValueProtectedHeaders(t *testing.T) {
+func TestParseEncryptedDuplicateHeaderParametersRejected(t *testing.T) {
 	key := make([]byte, 16)
 
 	// Encrypt with an explicitly-empty field in the protected header.
@@ -320,10 +320,33 @@ func TestParseEncryptedZeroValueProtectedHeaders(t *testing.T) {
 		t.Fatalf("re-marshaling test jwe with extra unprotected headers: %s", err)
 	}
 
-	// Parse and decrypt the tampered-with object.
+	// The unprotected "test" duplicates the authenticated protected "test";
+	// RFC 7516 Section 7.1 step 5 requires rejecting such messages.
 	parsed, err := ParseEncryptedJSON(string(raw), []KeyAlgorithm{DIRECT}, []ContentEncryption{A128GCM})
+	if !errors.Is(err, ErrDuplicateHeaderParameter) {
+		t.Fatalf("parsing tampered jwe: got %v, want ErrDuplicateHeaderParameter", err)
+	}
+	if parsed != nil {
+		t.Errorf("expected nil JWE on parse error, got %+v", parsed)
+	}
+
+	// In compatibility mode the message parses, a warning is emitted, and the
+	// authenticated (protected) value still wins over the unprotected one.
+	prevAllow := AllowDuplicateHeaderParameters
+	prevWarn := DuplicateHeaderWarning
+	t.Cleanup(func() {
+		AllowDuplicateHeaderParameters = prevAllow
+		DuplicateHeaderWarning = prevWarn
+	})
+	var warned []HeaderKey
+	DuplicateHeaderWarning = func(duplicates []HeaderKey) {
+		warned = append(warned, duplicates...)
+	}
+	AllowDuplicateHeaderParameters = true
+
+	parsed, err = ParseEncryptedJSON(string(raw), []KeyAlgorithm{DIRECT}, []ContentEncryption{A128GCM})
 	if err != nil {
-		t.Fatalf("parsing test jwe: %s", err)
+		t.Fatalf("parsing test jwe in compatibility mode: %s", err)
 	}
 	_, err = parsed.Decrypt(key)
 	if err != nil {
@@ -333,6 +356,9 @@ func TestParseEncryptedZeroValueProtectedHeaders(t *testing.T) {
 	got := string(parsed.Header.Other["test"])
 	if got != `""` {
 		t.Errorf("ParseEncryptedJSON().Header.Other[test] = %s, but want empty string", got)
+	}
+	if len(warned) != 1 || warned[0] != HeaderKey("test") {
+		t.Errorf("DuplicateHeaderWarning called with %v, want [test]", warned)
 	}
 }
 

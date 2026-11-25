@@ -234,6 +234,17 @@ func (parsed *rawJSONWebEncryption) sanitized(
 	}
 
 	for i, recipient := range obj.recipients {
+		// RFC 7516 Section 7.1 step 5: the JWE Header for each recipient is
+		// assembled from the protected header, the shared unprotected header,
+		// and that recipient's own header, and MUST NOT contain duplicate
+		// Header Parameter names. Only the protected header is authenticated,
+		// so a duplicate lets an unauthenticated header override parameters
+		// such as "alg", "enc", or "zip" that determine the processing path.
+		// Distinct recipients may legitimately use the same parameter names.
+		if err := checkDisjointHeaders(obj.protected, obj.unprotected, recipient.header); err != nil {
+			return nil, fmt.Errorf("go-jose/go-jose: recipient %d: %w", i, err)
+		}
+
 		headers := obj.mergedHeaders(&recipient)
 		if headers.getAlgorithm() == "" {
 			return nil, fmt.Errorf(`go-jose/go-jose: recipient %d: missing header "alg"`, i)

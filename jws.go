@@ -298,6 +298,14 @@ func (parsed *rawJSONWebSignature) sanitized(signatureAlgorithms []SignatureAlgo
 			Signature: parsed.Signature,
 		}
 
+		// RFC 7515 Section 7.2 step 7: the JWS Header assembled from the
+		// protected and unprotected headers MUST NOT contain duplicate Header
+		// Parameter names. Only the protected header is signed, so a duplicate
+		// lets an unsigned header determine parameters such as "alg".
+		if err := checkDisjointHeaders(signature.protected, signature.header); err != nil {
+			return nil, err
+		}
+
 		mergedHeaders := signature.mergedHeaders()
 		alg := mergedHeaders.getSignatureAlgorithm()
 		if !containsSignatureAlgorithm(signatureAlgorithms, alg) {
@@ -346,6 +354,12 @@ func (parsed *rawJSONWebSignature) sanitized(signatureAlgorithms []SignatureAlgo
 		}
 
 		obj.Signatures[i].header = sig.Header
+
+		// RFC 7515 Section 7.2 step 7: reject parameter names shared between
+		// the protected and unprotected per-signature headers.
+		if err := checkDisjointHeaders(obj.Signatures[i].protected, obj.Signatures[i].header); err != nil {
+			return nil, err
+		}
 
 		mergedHeaders := obj.Signatures[i].mergedHeaders()
 		alg := mergedHeaders.getSignatureAlgorithm()
