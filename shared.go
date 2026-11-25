@@ -25,6 +25,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // KeyAlgorithm represents a key management algorithm.
@@ -351,8 +352,17 @@ func (parsed rawHeader) checkNoCritical() error {
 	return nil
 }
 
+// checkNoB64 verifies "b64" is not present outside the JWS protected header.
+func (parsed rawHeader) checkNoB64() error {
+	if _, ok := parsed[headerB64]; ok {
+		return ErrUnsupportedCriticalHeader
+	}
+
+	return nil
+}
+
 // checkSupportedCritical verifies there are no unsupported critical headers.
-// Supported headers are passed in as a set: map of names to empty structs
+// Supported headers are passed in as a set: map of names to empty structs.
 func (parsed rawHeader) checkSupportedCritical(supported map[string]struct{}) error {
 	crit, err := parsed.getCritical()
 	if err != nil {
@@ -363,6 +373,14 @@ func (parsed rawHeader) checkSupportedCritical(supported map[string]struct{}) er
 		if _, ok := supported[name]; !ok {
 			return ErrUnsupportedCriticalHeader
 		}
+		if value, ok := parsed[HeaderKey(name)]; !ok || value == nil {
+			return ErrUnsupportedCriticalHeader
+		}
+	}
+
+	_, hasB64 := parsed[headerB64]
+	if hasB64 != slices.Contains(crit, headerB64) {
+		return ErrUnsupportedCriticalHeader
 	}
 
 	return nil
@@ -390,16 +408,39 @@ func (parsed rawHeader) getP2S() (*byteBuffer, error) {
 
 // getB64 extracts parsed "b64" from the raw JSON, defaulting to true.
 func (parsed rawHeader) getB64() (bool, error) {
-	v := parsed[headerB64]
-	if v == nil {
+	v, ok := parsed[headerB64]
+	if !ok {
 		return true, nil
+	}
+	if v == nil {
+		return false, errors.New("go-jose/go-jose: Invalid b64 header parameter")
 	}
 
 	var b64 bool
 	err := json.Unmarshal(*v, &b64)
 	if err != nil {
-		return true, err
+		return false, err
 	}
+	return b64, nil
+}
+
+// checkB64 validates "b64" and checks its consistency with "crit".
+func (parsed rawHeader) checkB64() (bool, error) {
+	b64, err := parsed.getB64()
+	if err != nil {
+		return false, err
+	}
+
+	crit, err := parsed.getCritical()
+	if err != nil {
+		return false, err
+	}
+
+	_, hasB64 := parsed[headerB64]
+	if hasB64 != slices.Contains(crit, headerB64) {
+		return false, ErrUnsupportedCriticalHeader
+	}
+
 	return b64, nil
 }
 

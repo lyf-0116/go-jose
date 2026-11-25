@@ -186,8 +186,9 @@ func (obj JSONWebSignature) computeAuthData(payload []byte, signature *Signature
 
 	if protectedHeader != nil {
 		var err error
-		if needsBase64, err = protectedHeader.getB64(); err != nil {
-			needsBase64 = true
+		needsBase64, err = protectedHeader.checkB64()
+		if err != nil {
+			return nil, err
 		}
 	}
 

@@ -454,6 +454,11 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 		if err != nil {
 			return err
 		}
+		// RFC 7797 Section 3 requires "b64" to be integrity protected.
+		err = signature.header.checkNoB64()
+		if err != nil {
+			return err
+		}
 	}
 
 	if signature.protected != nil {
@@ -514,6 +519,11 @@ func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey 
 			// protected; therefore, it MUST occur only within the JWS
 			// Protected Header."
 			err := signature.header.checkNoCritical()
+			if err != nil {
+				continue
+			}
+			// RFC 7797 Section 3 requires "b64" to be integrity protected.
+			err = signature.header.checkNoB64()
 			if err != nil {
 				continue
 			}

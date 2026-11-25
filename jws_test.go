@@ -845,8 +845,8 @@ func TestJWSComputeAuthDataBase64(t *testing.T) {
 	payload := []byte{0x01}
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
 
-	b64TrueHeader := newBuffer([]byte(`{"alg":"RSA-OAEP","enc":"A256GCM","b64":true}`))
-	b64FalseHeader := newBuffer([]byte(`{"alg":"RSA-OAEP","enc":"A256GCM","b64":false}`))
+	b64TrueHeader := newBuffer([]byte(`{"alg":"RSA-OAEP","enc":"A256GCM","b64":true,"crit":["b64"]}`))
+	b64FalseHeader := newBuffer([]byte(`{"alg":"RSA-OAEP","enc":"A256GCM","b64":false,"crit":["b64"]}`))
 
 	data, err := jws.computeAuthData(payload, &Signature{
 		original: &rawSignatureInfo{
