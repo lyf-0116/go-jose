@@ -439,6 +439,11 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 	if err != nil {
 		return err
 	}
+	headers := signature.mergedHeaders()
+	alg := headers.getSignatureAlgorithm()
+	if err := validateJWKMetadata(key, jwkUseSignature, string(alg)); err != nil {
+		return err
+	}
 	verifier, err := newVerifier(key)
 	if err != nil {
 		return err
@@ -468,8 +473,6 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey any) 
 		return ErrCryptoFailure
 	}
 
-	headers := signature.mergedHeaders()
-	alg := headers.getSignatureAlgorithm()
 	err = verifier.verifyPayload(input, signature.Signature, alg)
 	if err != nil {
 		return ErrCryptoFailure
@@ -533,6 +536,11 @@ func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey 
 		if err != nil {
 			continue
 		}
+		headers := signature.mergedHeaders()
+		alg := headers.getSignatureAlgorithm()
+		if err := validateJWKMetadata(key, jwkUseSignature, string(alg)); err != nil {
+			continue
+		}
 		verifier, err := newVerifier(key)
 		if err != nil {
 			continue
@@ -543,8 +551,6 @@ func (obj JSONWebSignature) DetachedVerifyMulti(payload []byte, verificationKey 
 			continue
 		}
 
-		headers := signature.mergedHeaders()
-		alg := headers.getSignatureAlgorithm()
 		err = verifier.verifyPayload(input, signature.Signature, alg)
 		if err != nil {
 			continue

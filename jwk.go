@@ -934,6 +934,11 @@ var (
 	ErrJWKSKidNotFound = errors.New("go-jose/go-jose: JWK with matching kid not found in JWK Set")
 )
 
+const (
+	jwkUseSignature  = "sig"
+	jwkUseEncryption = "enc"
+)
+
 func tryJWKS(key any, header Header) (any, error) {
 	var jwks JSONWebKeySet
 
@@ -960,7 +965,31 @@ func tryJWKS(key any, header Header) (any, error) {
 		return nil, ErrJWKSKidNotFound
 	}
 
-	return keys[0].Key, nil
+	return keys[0], nil
+}
+
+func validateJWKMetadata(key any, expectedUse string, expectedAlgorithm string) error {
+	var jwk JSONWebKey
+	switch selectedKey := key.(type) {
+	case JSONWebKey:
+		jwk = selectedKey
+	case *JSONWebKey:
+		if selectedKey == nil {
+			return nil
+		}
+		jwk = *selectedKey
+	default:
+		return nil
+	}
+
+	if jwk.Use != "" && jwk.Use != expectedUse {
+		return fmt.Errorf("go-jose/go-jose: JWK use %q does not match required use %q", jwk.Use, expectedUse)
+	}
+	if jwk.Algorithm != "" && jwk.Algorithm != expectedAlgorithm {
+		return fmt.Errorf("go-jose/go-jose: JWK algorithm %q does not match message algorithm %q", jwk.Algorithm, expectedAlgorithm)
+	}
+
+	return nil
 }
 
 // weakEd25519PublicKeys contains the low-order Ed25519 encodings accepted by

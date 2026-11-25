@@ -503,6 +503,9 @@ func (obj JSONWebEncryption) Decrypt(decryptionKey any) ([]byte, error) {
 	var plaintext []byte
 	recipient := obj.recipients[0]
 	recipientHeaders := obj.mergedHeaders(&recipient)
+	if err := validateJWKMetadata(key, jwkUseEncryption, string(recipientHeaders.getAlgorithm())); err != nil {
+		return nil, err
+	}
 
 	cek, err := decrypter.decryptKey(recipientHeaders, &recipient, generator)
 	if err != nil {
@@ -592,6 +595,10 @@ func (obj JSONWebEncryption) DecryptMulti(decryptionKey any) (int, Header, []byt
 	// Loop sets `err` in the function scope; don't shadow it.
 	for i, recipient := range obj.recipients {
 		recipientHeaders := obj.mergedHeaders(&recipient)
+		err = validateJWKMetadata(key, jwkUseEncryption, string(recipientHeaders.getAlgorithm()))
+		if err != nil {
+			continue
+		}
 
 		var cek []byte
 		cek, err = decrypter.decryptKey(recipientHeaders, &recipient, generator)
